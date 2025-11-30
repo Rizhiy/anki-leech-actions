@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.1.1 (2025-11-30)
+
+### Bug Fixes
+
+- Fix package script and update readme
+  ([`7fe1961`](https://github.com/Rizhiy/anki-leech-actions/commit/7fe1961ed8c73ab06648375ed8bd667fa70beb8c))
+
+### Refactoring
+
+- Remove default config
+  ([`8fcb8ed`](https://github.com/Rizhiy/anki-leech-actions/commit/8fcb8ed9606aa05b2fd7531841f0d56d1dfd153b))
+
+
 ## v1.1.0 (2025-11-30)
 
 ### Documentation
