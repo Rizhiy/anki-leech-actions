@@ -11,29 +11,33 @@ from anki.cards import Card
 from anki.collection import Collection
 from anki.notes import Note
 from aqt import gui_hooks, mw
-
-from .migrations import CURRENT_SCHEMA_VERSION, run_migrations
 from aqt.qt import (
-    QAction,
     QAbstractItemView,
+    QAction,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QHeaderView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QTimer,
     QVBoxLayout,
     Qt,
 )
+
 from aqt.utils import restoreGeom, saveGeom, tooltip
+
+from .migrations import CURRENT_SCHEMA_VERSION, run_migrations
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": CURRENT_SCHEMA_VERSION,
     "leech_tag": "leech",
+    "auto_run_enabled": True,
     "rules": [],
 }
 
@@ -144,8 +148,13 @@ class ConfigManager:
             raw_rules = DEFAULT_CONFIG["rules"]
         return [Rule.from_raw(rule) for rule in raw_rules]
 
-    def save_rules(self, rules: list[Rule]) -> None:
+    @property
+    def auto_run_enabled(self) -> bool:
+        return bool(self._config.get("auto_run_enabled", DEFAULT_CONFIG["auto_run_enabled"]))
+
+    def save_rules(self, rules: list[Rule], auto_run_enabled: bool) -> None:
         self._config["rules"] = [rule.to_dict() for rule in rules]
+        self._config["auto_run_enabled"] = bool(auto_run_enabled)
         self._config["schema_version"] = CURRENT_SCHEMA_VERSION
         mw.addonManager.writeConfig(ADDON_NAME, self._config)
 
@@ -160,9 +169,9 @@ class LeechActionManager:
     def find_leech_cards(self, deck: Optional[str] = None, note_type: Optional[str] = None) -> list[int]:
         query_parts = [f"tag:{self.config.leech_tag}"]
         if deck:
-            query_parts.append(f"deck:\"{deck}\"")
+            query_parts.append(f'deck:"{deck}"')
         if note_type:
-            query_parts.append(f"note:\"{note_type}\"")
+            query_parts.append(f'note:"{note_type}"')
         query = " ".join(query_parts)
         finder = _get_callable(self.col, "find_cards", "findCards")
         return finder(query)
@@ -343,7 +352,6 @@ class LeechActionsDialog(QDialog):
         tooltip(_format_summary("Processed leech cards", summary))
         self._refresh_preview()
 
-
     def reject(self) -> None:  # type: ignore[override]
         saveGeom(self, "anki_leech_actions.dialog")
         super().reject()
@@ -368,6 +376,10 @@ class RulesConfigDialog(QDialog):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+
+        self._auto_run_checkbox = QCheckBox("Automatically run rules when cards gain the leech tag", self)
+        self._auto_run_checkbox.setChecked(self._manager.auto_run_enabled)
+        layout.addWidget(self._auto_run_checkbox)
 
         self.table = QTableWidget(self)
         self.table.setColumnCount(5)
@@ -623,7 +635,6 @@ class RulesConfigDialog(QDialog):
             delay_widget.blockSignals(False)
             delay_widget.setEnabled(False)
 
-
     def _collect_rules(self) -> list[Rule]:
         rules: list[Rule] = []
         for row in range(self.table.rowCount()):
@@ -648,7 +659,7 @@ class RulesConfigDialog(QDialog):
 
     def _save(self) -> None:
         rules = self._collect_rules()
-        self._manager.save_rules(rules)
+        self._manager.save_rules(rules, self._auto_run_checkbox.isChecked())
         saveGeom(self, "anki_leech_actions.config")
         tooltip("Saved Anki Leech Actions configuration.")
         self.accept()
@@ -669,10 +680,12 @@ def _show_run_dialog(modal: bool = False) -> None:
         dialog.show()
 
 
-def _auto_process_leech(card: Card) -> None:
-    if not mw or not mw.col:
+def _auto_process_leech(card: Optional[Card]) -> None:
+    if not card or not mw or not mw.col:
         return
     manager = LeechActionManager(mw.col)
+    if not manager.config.auto_run_enabled:
+        return
     note = card.note()
     if manager.config.leech_tag not in note.tags:
         return
@@ -684,13 +697,18 @@ def _auto_process_leech(card: Card) -> None:
     mw.reset()
 
 
+def _on_reviewer_did_answer_card(_reviewer: Any, card: Optional[Card], _ease: int) -> None:
+    if not card:
+        return
+    QTimer.singleShot(0, lambda: _auto_process_leech(card))
+
+
 def _show_rules_dialog() -> None:
     if not mw or not mw.col:
         tooltip("Open a collection to configure rules.")
         return
     dialog = RulesConfigDialog(ConfigManager(), mw.col)
     dialog.exec()
-
 
 
 def _inject_menu_entry() -> None:
@@ -708,7 +726,4 @@ def _on_profile_loaded() -> None:
 
 
 gui_hooks.profile_did_open.append(_on_profile_loaded)
-if hasattr(gui_hooks, "card_did_leech"):
-    gui_hooks.card_did_leech.append(_auto_process_leech)
-
-
+gui_hooks.reviewer_did_answer_card.append(_on_reviewer_did_answer_card)

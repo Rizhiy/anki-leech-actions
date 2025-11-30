@@ -15,11 +15,20 @@ def v1(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(rules, list):
         rules = []
     config["rules"] = rules
+    config.setdefault("auto_run_enabled", True)
     config["schema_version"] = 1
     return config
 
 
-MIGRATIONS: list[MigrationFunction] = [v1]
+def v2(config: dict[str, Any]) -> dict[str, Any]:
+    """Ensure auto_run_enabled flag exists after schema v1 installs."""
+
+    config.setdefault("auto_run_enabled", True)
+    config["schema_version"] = 2
+    return config
+
+
+MIGRATIONS: list[MigrationFunction] = [v1, v2]
 CURRENT_SCHEMA_VERSION = len(MIGRATIONS)
 
 

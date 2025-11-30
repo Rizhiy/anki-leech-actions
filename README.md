@@ -6,7 +6,10 @@ Simple addon to better manage leeches by applying bulk actions to troublesome ca
 
 - Automatically applies your chosen action whenever Anki tags a card as a leech.
 - Supports deleting, postponing, resetting lapse counts, or simply removing the leech tag from cards.
+- Lets you disable automatic handling and rely on the preview-first manual runner when you prefer.
 - Fully configurable by deck name pattern and note type, so each group of cards can behave differently.
+
+> **Heads-up:** Anki's built-in leech behavior can suspend cards on its own. If you prefer to keep reviewing those leeches, adjust the default leech handling inside Anki so it no longer suspends them before using this add-on.
 
 ## Usage
 
@@ -27,6 +30,8 @@ Open `Tools → Anki Leech Actions` to launch the rule editor (and find the **Ru
 4. **Delay (days)** – enabled only for _Delay card_ actions to specify how long to postpone the card.
 
 Use **Add rule**, **Remove selected**, and the new **Move up/Move down** buttons to curate and prioritize the list, then press **Save**. Rules are evaluated from top to bottom, and the first match wins. Cards that do not match any rule are skipped.
+
+The **Automatically run rules when cards gain the leech tag** checkbox toggles background processing if you’d rather rely on manual sweeps.
 
 Configuration changes are automatically migrated between versions, so existing installs keep working even if new fields are introduced.
 
