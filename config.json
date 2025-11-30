@@ -1,0 +1,11 @@
+{
+  "leech_tag": "leech",
+  "rules": [
+    {
+      "deck": "*",
+      "note_type": "*",
+      "action": "reset",
+      "delay_days": 7
+    }
+  ]
+}
