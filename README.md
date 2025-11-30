@@ -5,9 +5,7 @@ Simple addon to better manage leeches by applying bulk actions to troublesome ca
 ## Features
 
 - Automatically applies your chosen action whenever Anki tags a card as a leech.
-- Adds a `Tools → Anki Leech Actions` dialog with both a visual rule editor and a quick-launch button to review pending leeches.
-- Supports deleting, resetting, postponing, resetting lapse counts, or simply removing the leech tag from cards.
-- Lets you preview pending actions before running the workflow.
+- Supports deleting, postponing, resetting lapse counts, or simply removing the leech tag from cards.
 - Fully configurable by deck name pattern and note type, so each group of cards can behave differently.
 
 ## Usage
