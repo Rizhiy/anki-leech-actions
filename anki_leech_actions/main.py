@@ -34,13 +34,6 @@ from aqt.utils import restoreGeom, saveGeom, tooltip
 
 from .migrations import CURRENT_SCHEMA_VERSION, run_migrations
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "schema_version": CURRENT_SCHEMA_VERSION,
-    "leech_tag": "leech",
-    "auto_run_enabled": True,
-    "rules": [],
-}
-
 ACTION_OPTIONS: list[tuple[str, str]] = [
     ("Reset progress", "reset"),
     ("Delay card", "delay"),
@@ -129,9 +122,9 @@ class ConfigManager:
     @staticmethod
     def _ensure_config() -> dict[str, Any]:
         addon_manager = mw.addonManager
-        existing_config = addon_manager.getConfig(ADDON_NAME)
+        existing_config = addon_manager.getConfig(ADDON_NAME) or {}
         is_new = not existing_config
-        config = copy.deepcopy(existing_config) if existing_config else copy.deepcopy(DEFAULT_CONFIG)
+        config = copy.deepcopy(existing_config)
         config, migrated = run_migrations(config)
         if is_new or migrated:
             addon_manager.writeConfig(ADDON_NAME, config)
@@ -139,18 +132,16 @@ class ConfigManager:
 
     @property
     def leech_tag(self) -> str:
-        return self._config.get("leech_tag", DEFAULT_CONFIG["leech_tag"])
+        return str(self._config["leech_tag"])
 
     @property
     def rules(self) -> list[Rule]:
-        raw_rules = self._config.get("rules", [])
-        if not raw_rules:
-            raw_rules = DEFAULT_CONFIG["rules"]
+        raw_rules = self._config["rules"]
         return [Rule.from_raw(rule) for rule in raw_rules]
 
     @property
     def auto_run_enabled(self) -> bool:
-        return bool(self._config.get("auto_run_enabled", DEFAULT_CONFIG["auto_run_enabled"]))
+        return bool(self._config["auto_run_enabled"])
 
     def save_rules(self, rules: list[Rule], auto_run_enabled: bool) -> None:
         self._config["rules"] = [rule.to_dict() for rule in rules]
