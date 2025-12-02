@@ -28,7 +28,17 @@ def v2(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-MIGRATIONS: list[MigrationFunction] = [v1, v2]
+
+
+def v3(config: dict[str, Any]) -> dict[str, Any]:
+    """Add optional notification toggle for auto processing."""
+
+    config.setdefault("show_auto_notifications", True)
+    config["schema_version"] = 3
+    return config
+
+
+MIGRATIONS: list[MigrationFunction] = [v1, v2, v3]
 CURRENT_SCHEMA_VERSION = len(MIGRATIONS)
 
 

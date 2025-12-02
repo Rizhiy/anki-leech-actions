@@ -143,9 +143,14 @@ class ConfigManager:
     def auto_run_enabled(self) -> bool:
         return bool(self._config["auto_run_enabled"])
 
-    def save_rules(self, rules: list[Rule], auto_run_enabled: bool) -> None:
+    @property
+    def show_auto_notifications(self) -> bool:
+        return bool(self._config["show_auto_notifications"])
+
+    def save_rules(self, rules: list[Rule], auto_run_enabled: bool, show_auto_notifications: bool) -> None:
         self._config["rules"] = [rule.to_dict() for rule in rules]
         self._config["auto_run_enabled"] = bool(auto_run_enabled)
+        self._config["show_auto_notifications"] = bool(show_auto_notifications)
         self._config["schema_version"] = CURRENT_SCHEMA_VERSION
         mw.addonManager.writeConfig(ADDON_NAME, self._config)
 
@@ -359,6 +364,7 @@ class RulesConfigDialog(QDialog):
         self._action_label_map = {label.lower(): value for label, value in self._actions}
         self._deck_choices = self._build_deck_choices()
         self._note_type_choices = self._build_note_type_choices()
+        self._auto_notification_checkbox: QCheckBox | None = None
         self.setWindowTitle("Anki Leech Actions — Rules")
         self.resize(1200, 600)
         self._setup_ui()
@@ -370,7 +376,16 @@ class RulesConfigDialog(QDialog):
 
         self._auto_run_checkbox = QCheckBox("Automatically run rules when cards gain the leech tag", self)
         self._auto_run_checkbox.setChecked(self._manager.auto_run_enabled)
+        self._auto_run_checkbox.stateChanged.connect(self._sync_auto_notification_checkbox)
         layout.addWidget(self._auto_run_checkbox)
+
+        self._auto_notification_checkbox = QCheckBox(
+            "Show notification after automatically processing a leech card",
+            self,
+        )
+        self._auto_notification_checkbox.setChecked(self._manager.show_auto_notifications)
+        layout.addWidget(self._auto_notification_checkbox)
+        self._sync_auto_notification_checkbox()
 
         self.table = QTableWidget(self)
         self.table.setColumnCount(5)
@@ -417,6 +432,11 @@ class RulesConfigDialog(QDialog):
         button_box.accepted.connect(self._save)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+    def _sync_auto_notification_checkbox(self) -> None:
+        enabled = self._auto_run_checkbox.isChecked()
+        if hasattr(self, "_auto_notification_checkbox") and self._auto_notification_checkbox:
+            self._auto_notification_checkbox.setEnabled(enabled)
 
     def _build_deck_choices(self) -> list[tuple[str, str]]:
         decks = self._col.decks
@@ -650,7 +670,11 @@ class RulesConfigDialog(QDialog):
 
     def _save(self) -> None:
         rules = self._collect_rules()
-        self._manager.save_rules(rules, self._auto_run_checkbox.isChecked())
+        self._manager.save_rules(
+            rules,
+            self._auto_run_checkbox.isChecked(),
+            bool(self._auto_notification_checkbox and self._auto_notification_checkbox.isChecked()),
+        )
         saveGeom(self, "anki_leech_actions.config")
         tooltip("Saved Anki Leech Actions configuration.")
         self.accept()
@@ -684,7 +708,8 @@ def _auto_process_leech(card: Optional[Card]) -> None:
     summary = manager.apply_rules_to_card(card)
     if not any(summary.values()):
         return
-    tooltip(_format_summary("Auto-processed leech card", summary))
+    if manager.config.show_auto_notifications:
+        tooltip(_format_summary("Auto-processed leech card", summary))
     mw.reset()
 
 

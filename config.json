@@ -1,5 +1,7 @@
 {
   "leech_tag": "leech",
+  "auto_run_enabled": true,
+  "show_auto_notifications": true,
   "rules": [
     {
       "deck": "*",
