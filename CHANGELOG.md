@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.2.0 (2025-12-02)
+
+### Features
+
+- Add ability to disable auto-notifications
+  ([`72bc5e3`](https://github.com/Rizhiy/anki-leech-actions/commit/72bc5e3540a20b68426e68f3601ed3030e676465))
+
+
 ## v1.1.1 (2025-11-30)
 
 ### Bug Fixes
