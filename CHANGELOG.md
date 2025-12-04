@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.3.0 (2025-12-04)
+
+### Features
+
+- Refactor and more actions
+  ([`113ea5d`](https://github.com/Rizhiy/anki-leech-actions/commit/113ea5d3950384260a3721af757a25613aef3d88))
+
+
 ## v1.2.0 (2025-12-02)
 
 ### Features
