@@ -28,8 +28,6 @@ def v2(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-
-
 def v3(config: dict[str, Any]) -> dict[str, Any]:
     """Add optional notification toggle for auto processing."""
 

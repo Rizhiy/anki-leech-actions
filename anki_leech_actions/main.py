@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from enum import Enum
 from fnmatch import fnmatch
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, Union
 
 from anki.cards import Card
 from anki.collection import Collection
@@ -23,26 +24,38 @@ from aqt.qt import (
     QLabel,
     QPushButton,
     QSpinBox,
+    Qt,
     QTableWidget,
     QTableWidgetItem,
     QTimer,
     QVBoxLayout,
-    Qt,
 )
-
 from aqt.utils import restoreGeom, saveGeom, tooltip
 
 from .migrations import CURRENT_SCHEMA_VERSION, run_migrations
 
-ACTION_OPTIONS: list[tuple[str, str]] = [
-    ("Reset progress", "reset"),
-    ("Delay card", "delay"),
-    ("Delete card", "delete"),
-    ("Reset lapse count", "reset_lapses"),
-    ("Remove leech tag", "remove_tag"),
+
+class LeechAction(str, Enum):
+    NOOP = "noop"
+    RESET = "reset"
+    RESET_REVIEWS = "reset_reviews"
+    DELAY = "delay"
+    DELETE = "delete"
+    RESET_LAPSES = "reset_lapses"
+    REMOVE_TAG = "remove_tag"
+
+
+ACTION_OPTIONS: list[tuple[str, LeechAction]] = [
+    ("Do nothing", LeechAction.NOOP),
+    ("Reset progress", LeechAction.RESET),
+    ("Reset review count", LeechAction.RESET_REVIEWS),
+    ("Delay card", LeechAction.DELAY),
+    ("Delete card", LeechAction.DELETE),
+    ("Reset lapse count", LeechAction.RESET_LAPSES),
+    ("Remove leech tag", LeechAction.REMOVE_TAG),
 ]
-ACTION_LABEL_MAP = {label.lower(): value for label, value in ACTION_OPTIONS}
-ALLOWED_ACTIONS = {value for _, value in ACTION_OPTIONS}
+ACTION_LABEL_MAP = {label.lower(): action for label, action in ACTION_OPTIONS}
+ACTION_DISPLAY_MAP = {action: label for label, action in ACTION_OPTIONS}
 
 ADDON_NAME = __name__
 MENU_ACTION_TEXT = "Anki Leech Actions"
@@ -59,22 +72,47 @@ def _get_callable(obj: Any, *names: str):
     raise AttributeError(f"Object {obj} does not provide any of {names}")
 
 
-def _format_summary(prefix: str, summary: dict[str, int]) -> str:
-    parts = [f"{action}: {count}" for action, count in summary.items() if count]
+SummaryMap = dict[Union[LeechAction, None], int]
+
+
+def _format_summary_key(action: LeechAction | None) -> str:
+    if isinstance(action, LeechAction):
+        return ACTION_DISPLAY_MAP.get(action, action.value)
+    return "Skipped"
+
+
+def _format_summary(prefix: str, summary: SummaryMap) -> str:
+    parts = [f"{_format_summary_key(action)}: {count}" for action, count in summary.items() if count]
     if not parts:
         return f"{prefix} — no changes"
     return f"{prefix} — " + ", ".join(parts)
 
 
-def _format_bullet_summary(prefix: str, summary: dict[str, int]) -> str:
-    parts = [f"- {action}: {count}" for action, count in summary.items() if count]
+def _format_bullet_summary(prefix: str, summary: SummaryMap) -> str:
+    parts = [f"- {_format_summary_key(action)}: {count}" for action, count in summary.items() if count]
     if not parts:
         return f"{prefix} — no changes"
     return f"{prefix}:\n" + "\n".join(parts)
 
 
-def _empty_summary() -> dict[str, int]:
-    return {"delete": 0, "reset": 0, "delay": 0, "reset_lapses": 0, "remove_tag": 0, "skipped": 0}
+def _empty_summary() -> SummaryMap:
+    summary: SummaryMap = {action: 0 for action in LeechAction}
+    summary[None] = 0
+    return summary
+
+
+def _coerce_action(value: Any, default: LeechAction = LeechAction.RESET) -> LeechAction:
+    if isinstance(value, LeechAction):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        for action in LeechAction:
+            if normalized == action.value:
+                return action
+        mapped = ACTION_LABEL_MAP.get(normalized)
+        if mapped:
+            return mapped
+    return default
 
 
 @dataclass
@@ -83,32 +121,29 @@ class Rule:
 
     deck: str
     note_type: str
-    action: str
+    action: LeechAction
     delay_days: Optional[int]
 
     @classmethod
     def from_raw(cls, data: dict[str, Any]) -> "Rule":
         deck = data.get("deck", "*")
         note_type = data.get("note_type", "*")
-        raw_action = str(data.get("action", "reset")).strip()
-        normalized_action = ACTION_LABEL_MAP.get(raw_action.lower(), raw_action.lower())
-        if normalized_action not in ALLOWED_ACTIONS:
-            normalized_action = "reset"
+        action = _coerce_action(data.get("action", LeechAction.RESET.value))
         raw_delay = data.get("delay_days")
         delay = int(raw_delay) if raw_delay not in (None, "") else None
-        if normalized_action != "delay":
+        if action != LeechAction.DELAY:
             delay = None
         elif delay is not None:
             delay = max(1, delay)
         else:
             delay = 7
-        return cls(deck=deck, note_type=note_type, action=normalized_action, delay_days=delay)
+        return cls(deck=deck, note_type=note_type, action=action, delay_days=delay)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "deck": self.deck,
             "note_type": self.note_type,
-            "action": self.action,
+            "action": self.action.value,
             "delay_days": self.delay_days,
         }
 
@@ -161,6 +196,14 @@ class LeechActionManager:
     def __init__(self, collection: Collection) -> None:
         self.col = collection
         self.config = ConfigManager()
+        self._action_handlers: dict[LeechAction, Callable[[Card], None]] = {
+            LeechAction.DELETE: self._delete_card,
+            LeechAction.RESET: self._reset_card,
+            LeechAction.RESET_REVIEWS: self._reset_reviews,
+            LeechAction.RESET_LAPSES: self._reset_lapses,
+            LeechAction.REMOVE_TAG: self._strip_leech_tag,
+            LeechAction.NOOP: lambda _card: None,
+        }
 
     def find_leech_cards(self, deck: Optional[str] = None, note_type: Optional[str] = None) -> list[int]:
         query_parts = [f"tag:{self.config.leech_tag}"]
@@ -172,7 +215,7 @@ class LeechActionManager:
         finder = _get_callable(self.col, "find_cards", "findCards")
         return finder(query)
 
-    def process_cards(self, card_ids: Iterable[int], simulate: bool = False) -> dict[str, int]:
+    def process_cards(self, card_ids: Iterable[int], simulate: bool = False) -> SummaryMap:
         total_summary = _empty_summary()
         if not card_ids:
             return total_summary
@@ -180,14 +223,14 @@ class LeechActionManager:
         for cid in card_ids:
             card = self._get_card(cid)
             if not card:
-                total_summary["skipped"] += 1
+                total_summary[None] += 1
                 continue
             card_summary = self.apply_rules_to_card(card, simulate=simulate)
             for key, value in card_summary.items():
                 total_summary[key] += value
         return total_summary
 
-    def apply_rules_to_card(self, card: Card, simulate: bool = False) -> dict[str, int]:
+    def apply_rules_to_card(self, card: Card, *, simulate: bool = False) -> SummaryMap:
         summary = _empty_summary()
         note = card.note()
         deck_name = self.col.decks.name(card.did)
@@ -199,11 +242,11 @@ class LeechActionManager:
             if not self._rule_matches(rule, deck_name, model_name):
                 continue
             matched = True
-            self._execute_rule(rule, card, note, summary, simulate=simulate)
-            if rule.action == "delete":
+            self._execute_rule(rule, card, summary, simulate=simulate)
+            if rule.action is LeechAction.DELETE:
                 break
         if not matched:
-            summary["skipped"] += 1
+            summary[None] += 1
         return summary
 
     def _rule_matches(self, rule: Rule, deck_name: str, model_name: str) -> bool:
@@ -213,37 +256,24 @@ class LeechActionManager:
         self,
         rule: Rule,
         card: Card,
-        note: Note,
-        summary: dict[str, int],
+        summary: SummaryMap,
+        *,
         simulate: bool = False,
     ) -> None:
-        if rule.action == "delete":
+        action = rule.action
+        if action is LeechAction.DELAY:
             if not simulate:
-                self._strip_leech_tag(note)
-                self._delete_card(card)
-            summary["delete"] += 1
-        elif rule.action == "reset":
-            if not simulate:
-                self._reset_card(card)
-                self._strip_leech_tag(note)
-            summary["reset"] += 1
-        elif rule.action == "delay":
-            delay_days = rule.delay_days or 7
-            if not simulate:
+                delay_days = rule.delay_days or 7
                 self._delay_card(card, delay_days)
-                self._strip_leech_tag(note)
-            summary["delay"] += 1
-        elif rule.action == "reset_lapses":
-            if not simulate:
-                self._reset_lapses(card)
-                self._strip_leech_tag(note)
-            summary["reset_lapses"] += 1
-        elif rule.action == "remove_tag":
-            if not simulate:
-                self._strip_leech_tag(note)
-            summary["remove_tag"] += 1
-        else:
-            summary["skipped"] += 1
+            summary[LeechAction.DELAY] += 1
+            return
+        handler = self._action_handlers.get(action)
+        if not handler:
+            summary[None] += 1
+            return
+        if not simulate:
+            handler(card)
+        summary[action] += 1
 
     def _get_card(self, cid: int) -> Optional[Card]:
         getter = getattr(self.col, "get_card", None) or getattr(self.col, "getCard", None)
@@ -267,11 +297,16 @@ class LeechActionManager:
         card.due = self.col.sched.today + delay_days
         card.flush()
 
+    def _reset_reviews(self, card: Card) -> None:
+        card.reps = 0
+        card.flush()
+
     def _reset_lapses(self, card: Card) -> None:
         card.lapses = 0
         card.flush()
 
-    def _strip_leech_tag(self, note: Note) -> None:
+    def _strip_leech_tag(self, card: Card) -> None:
+        note = card.note()
         tag = self.config.leech_tag
         if tag not in note.tags:
             return
@@ -289,7 +324,7 @@ class LeechActionsDialog(QDialog):
         self.button_box: QDialogButtonBox | None = None
         self._setup_ui()
         restoreGeom(self, "anki_leech_actions.dialog")
-        self._preview_summary: dict[str, int] | None = None
+        self._preview_summary: SummaryMap | None = None
         self._preview_card_ids: list[int] | None = None
         self._refresh_preview()
 
@@ -502,11 +537,11 @@ class RulesConfigDialog(QDialog):
         combo.setCurrentIndex(index)
         return combo
 
-    def _create_action_combo(self, value: str, delay_widget: QSpinBox) -> QComboBox:
+    def _create_action_combo(self, value: LeechAction, delay_widget: QSpinBox) -> QComboBox:
         combo = QComboBox(self)
         for label, data in self._actions:
-            combo.addItem(label, data)
-        index = combo.findData(value)
+            combo.addItem(label, data.value)
+        index = combo.findData(value.value)
         combo.setCurrentIndex(max(0, index))
         combo.currentIndexChanged.connect(lambda _idx, c=combo, d=delay_widget: self._sync_delay_enabled(c, d))
         self._sync_delay_enabled(combo, delay_widget)
@@ -533,7 +568,7 @@ class RulesConfigDialog(QDialog):
         self.table.insertRow(row)
         deck_value = rule.deck if rule else "*"
         note_value = rule.note_type if rule else "*"
-        action_value = rule.action if rule else "reset"
+        action_value = rule.action if rule else LeechAction.RESET
         delay_value = rule.delay_days if rule and rule.delay_days is not None else None
 
         indicator = QTableWidgetItem("")
@@ -545,7 +580,7 @@ class RulesConfigDialog(QDialog):
         deck_combo.setMinimumWidth(200)
         note_combo = self._create_combo(self._note_type_choices, note_value)
         note_combo.setMinimumWidth(200)
-        delay_spin = self._create_delay_spin(delay_value if rule and rule.action == "delay" else None)
+        delay_spin = self._create_delay_spin(delay_value if rule and rule.action is LeechAction.DELAY else None)
         action_combo = self._create_action_combo(action_value, delay_spin)
         action_combo.setMinimumWidth(140)
 
@@ -623,7 +658,8 @@ class RulesConfigDialog(QDialog):
         self._update_selection_indicators()
 
     def _sync_delay_enabled(self, combo: QComboBox, delay_widget: QSpinBox) -> None:
-        is_delay = combo.currentData() == "delay"
+        action = _coerce_action(combo.currentData())
+        is_delay = action is LeechAction.DELAY
         stored_value = delay_widget.property("last_delay_value")
         if is_delay:
             delay_widget.setMinimum(1)
@@ -662,9 +698,9 @@ class RulesConfigDialog(QDialog):
             action_data = action_combo.currentData()
             if not action_data:
                 action_label = action_combo.currentText().strip().lower()
-                action_data = self._action_label_map.get(action_label, "reset")
-            action = action_data or "reset"
-            delay_days = max(1, delay_spin.value()) if action == "delay" else None
+                action_data = self._action_label_map.get(action_label)
+            action = _coerce_action(action_data)
+            delay_days = max(1, delay_spin.value()) if action is LeechAction.DELAY else None
             rules.append(Rule(deck=deck, note_type=note_type, action=action, delay_days=delay_days))
         return rules
 
@@ -738,6 +774,7 @@ def _inject_menu_entry() -> None:
 
 
 def _on_profile_loaded() -> None:
+    ConfigManager()
     _inject_menu_entry()
 
 
