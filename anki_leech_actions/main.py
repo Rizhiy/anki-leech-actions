@@ -182,10 +182,17 @@ class ConfigManager:
     def show_auto_notifications(self) -> bool:
         return bool(self._config["show_auto_notifications"])
 
-    def save_rules(self, rules: list[Rule], auto_run_enabled: bool, show_auto_notifications: bool) -> None:
+    @property
+    def run_after_sync(self) -> bool:
+        return bool(self._config["run_after_sync"])
+
+    def save_rules(
+        self, rules: list[Rule], auto_run_enabled: bool, show_auto_notifications: bool, run_after_sync: bool
+    ) -> None:
         self._config["rules"] = [rule.to_dict() for rule in rules]
         self._config["auto_run_enabled"] = bool(auto_run_enabled)
         self._config["show_auto_notifications"] = bool(show_auto_notifications)
+        self._config["run_after_sync"] = bool(run_after_sync)
         self._config["schema_version"] = CURRENT_SCHEMA_VERSION
         mw.addonManager.writeConfig(ADDON_NAME, self._config)
 
@@ -377,9 +384,7 @@ class LeechActionsDialog(QDialog):
         if not self._preview_summary or not any(self._preview_summary.values()):
             tooltip("No changes would be applied.")
             return
-        mw.checkpoint(RUN_DIALOG_TITLE)
-        summary = self._manager.process_cards(self._preview_card_ids)
-        mw.reset()
+        summary = _process_all_leech_cards(RUN_DIALOG_TITLE)
         tooltip(_format_summary("Processed leech cards", summary))
         self._refresh_preview()
 
@@ -421,6 +426,10 @@ class RulesConfigDialog(QDialog):
         self._auto_notification_checkbox.setChecked(self._manager.show_auto_notifications)
         layout.addWidget(self._auto_notification_checkbox)
         self._sync_auto_notification_checkbox()
+
+        self._run_after_sync_checkbox = QCheckBox("Run leech actions automatically after sync completes", self)
+        self._run_after_sync_checkbox.setChecked(self._manager.run_after_sync)
+        layout.addWidget(self._run_after_sync_checkbox)
 
         self.table = QTableWidget(self)
         self.table.setColumnCount(5)
@@ -710,6 +719,7 @@ class RulesConfigDialog(QDialog):
             rules,
             self._auto_run_checkbox.isChecked(),
             bool(self._auto_notification_checkbox and self._auto_notification_checkbox.isChecked()),
+            self._run_after_sync_checkbox.isChecked(),
         )
         saveGeom(self, "anki_leech_actions.config")
         tooltip("Saved Anki Leech Actions configuration.")
@@ -718,6 +728,20 @@ class RulesConfigDialog(QDialog):
     def reject(self) -> None:  # type: ignore[override]
         saveGeom(self, "anki_leech_actions.config")
         super().reject()
+
+
+def _process_all_leech_cards(checkpoint_title: str = RUN_DIALOG_TITLE) -> SummaryMap:
+    """Process all leech cards and return summary. Creates checkpoint and resets UI."""
+    if not mw or not mw.col:
+        return _empty_summary()
+    manager = LeechActionManager(mw.col)
+    card_ids = manager.find_leech_cards()
+    if not card_ids:
+        return _empty_summary()
+    mw.checkpoint(checkpoint_title)
+    summary = manager.process_cards(card_ids)
+    mw.reset()
+    return summary
 
 
 def _show_run_dialog(modal: bool = False) -> None:
@@ -755,6 +779,17 @@ def _on_reviewer_did_answer_card(_reviewer: Any, card: Optional[Card], _ease: in
     QTimer.singleShot(0, lambda: _auto_process_leech(card))
 
 
+def _on_sync_did_finish() -> None:
+    if not mw or not mw.col:
+        return
+    config = ConfigManager()
+    if not config.run_after_sync:
+        return
+    summary = _process_all_leech_cards(AUTO_CHECKPOINT_TITLE)
+    if any(summary.values()):
+        tooltip(_format_summary("Processed leech cards after sync", summary))
+
+
 def _show_rules_dialog() -> None:
     if not mw or not mw.col:
         tooltip("Open a collection to configure rules.")
@@ -780,3 +815,4 @@ def _on_profile_loaded() -> None:
 
 gui_hooks.profile_did_open.append(_on_profile_loaded)
 gui_hooks.reviewer_did_answer_card.append(_on_reviewer_did_answer_card)
+gui_hooks.sync_did_finish.append(_on_sync_did_finish)

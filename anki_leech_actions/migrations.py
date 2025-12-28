@@ -36,7 +36,15 @@ def v3(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-MIGRATIONS: list[MigrationFunction] = [v1, v2, v3]
+def v4(config: dict[str, Any]) -> dict[str, Any]:
+    """Add option to run leech actions after sync."""
+
+    config.setdefault("run_after_sync", False)
+    config["schema_version"] = 4
+    return config
+
+
+MIGRATIONS: list[MigrationFunction] = [v1, v2, v3, v4]
 CURRENT_SCHEMA_VERSION = len(MIGRATIONS)
 
 
