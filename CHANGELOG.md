@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.4.0 (2025-12-29)
+
+### Features
+
+- Add option to run leech actions after sync
+  ([`24229fd`](https://github.com/Rizhiy/anki-leech-actions/commit/24229fda2b1d9b0a895033deba2df63314e3cba0))
+
+
 ## v1.3.0 (2025-12-04)
 
 ### Features
