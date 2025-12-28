@@ -1,5 +1,7 @@
 # Anki Leech Actions
 
+[Addon Page](https://ankiweb.net/shared/info/1457695746)
+
 Simple addon to better manage leeches by applying bulk actions to troublesome cards.
 
 ## Features
